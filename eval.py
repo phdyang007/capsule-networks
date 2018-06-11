@@ -11,16 +11,21 @@ from utils import load_mnist, save_images
 
 def main(_):
     # Load Graph
-    capsNet = CapsNet(is_training=False)
+    capsNet = CapsNet(is_training=False, routing=1)
     print('[+] Graph is constructed')
 
     # Load test data
     teX, teY = load_mnist(conf.dataset, is_training=False)
-
+    config = tf.ConfigProto(allow_soft_placement=True)
+    # use GPU0
+    config.gpu_options.visible_device_list = '3'
+    # allocate 50% of GPU memory
+    config.gpu_options.allow_growth = True
+    config.gpu_options.per_process_gpu_memory_fraction = 0.45
     # Start session
     with capsNet.graph.as_default():
         sv = tf.train.Supervisor(logdir=conf.logdir)
-        with sv.managed_session(config=tf.ConfigProto(allow_soft_placement=True)) as sess:
+        with sv.managed_session(config=config) as sess:
             # Restore parameters
             checkpoint_path = tf.train.latest_checkpoint(conf.logdir)
             sv.saver.restore(sess, checkpoint_path)
