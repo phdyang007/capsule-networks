@@ -1,23 +1,101 @@
 import tensorflow as tf
-
+import tensorflow.contrib.slim as slim
 from config import Config as conf
 from utils import *
 
 
 class CapsNet:
-    def __init__(self, is_training=False, routing = 0):
+    def __init__(self, is_training=False, routing = 0, dcap_init = 0):
         self.graph = tf.Graph()
+
+
         with self.graph.as_default():
             if is_training:
                 self.x, self.y, self.num_batch = get_batch_data()
             else:
                 self.x = tf.placeholder(tf.float32, [None, 28, 28, 1], name='input')
-            self.build_model(is_training, routing)
+            self.input = tf.reshape(self.x, [conf.batch_size, 28, 28, 1])
+            assert self.input.get_shape() == (conf.batch_size, 28, 28, 1)
+            if dcap_init == 0:
+                self.build_model(is_training, routing)
+            else:
+                #build two models: (1) CNN based decap inference model  and (2) caps with bp routing
+                self.build_model_2(routing = routing)
+
+    def build_model_dcap_init(self, is_training=False, reuse=False):
+        with tf.variable_scope("dcap_init") as scope:
+            if reuse:
+                tf.get_variable_scope().reuse_variables()
+            else:
+                assert tf.get_variable_scope().reuse == False
+            with slim.arg_scope([slim.conv2d],
+                        activation_fn=tf.nn.relu,
+                        weights_initializer=tf.truncated_normal_initializer(0.0, 0.02),
+                        biases_initializer=tf.constant_initializer(0),
+                        normalizer_fn=slim.batch_norm,
+                        normalizer_params={'is_training': is_training}):
+                net = slim.repeat(self.input, 2, slim.conv2d, 64, [3, 3], scope='dcap_conv1') #28x28x64
+                #print net.get_shape()
+                net = slim.conv2d(net, 64, [3, 3], stride=2, scope='dcap_pool1') #14x14x64
+                #print net.get_shape()
+                net = slim.repeat(net, 2, slim.conv2d, 128, [3, 3], scope='dcap_conv2') #14x14x128
+                #print net.get_shape()
+                net = slim.conv2d(net, 128, [3, 3], stride=2, scope='dcap_pool2') #7x7x128
+                #print net.get_shape()
+                net = slim.conv2d(net, 10, [3, 3], stride=2, scope='dcap_conv3') #4x4x10
+                #print net.get_shape()
+                net = tf.reshape(net, [conf.batch_size, 16, 10]) # batch x 16 x 10
+                dcap = tf.transpose(net, perm=[0, 2, 1]) # batch x 10 x 16
+                assert dcap.get_shape() == (conf.batch_size, 10, 16)
+
+                logits = tf.sqrt(tf.reduce_sum(tf.square(dcap), axis=2) + conf.eps)  # [batch_size, 10]
+                probs = tf.nn.softmax(logits)
+                preds = tf.argmax(probs, axis=1)
+                mloss = self.margin_loss(logits=logits, labels=self.y)
+        return mloss, dcap
+    
+    def build_model_capnets(self, is_training=False):
+        with tf.variable_scope("cap_nets") as scope:
+            with tf.variable_scope('conv1_layer'):
+                conv1 = tf.layers.conv2d(
+                    inputs=self.input,
+                    filters=256,
+                    kernel_size=9,
+                    activation=tf.nn.relu,
+                )
+                assert conv1.get_shape() == (conf.batch_size, 20, 20, 256)
+
+            # Primary Caps
+            with tf.variable_scope('primary_caps'):
+                pcaps = self.primary_caps(
+                    inputs=conv1
+                )
+                assert pcaps.get_shape() == (conf.batch_size, 32*6*6, 8)
+
+            # Digit Caps
+            with tf.variable_scope('digit_caps'):
+                dcap = self.digit_caps(
+                    inputs=pcaps,
+                    num_iters=3,
+                    num_caps=10,
+                    routing =1
+                )
+                assert dcap.get_shape() == (conf.batch_size, 10, 16)
+        return dcap
+    def build_model_2(self, routing = 1):
+        self.mloss, dcap = self.build_model_dcap_init(is_training=True)
+        _, self.dcap_gt = self.build_model_dcap_init(is_training=False, reuse= True)
+        dcap = self.build_model_capnets(is_training=True)
+        if routing == 1:
+            self.dloss = tf.nn.l2_loss(dcap-self.dcap_gt)
+        trainable_variables = tf.trainable_variables()
+        self.cnn_vars = [var for var in trainable_variables if 'dcap_init' in var.name]
+        self.cap_vars = [var for var in trainable_variables if 'cap_nets' in var.name]
+
 
     def build_model(self, is_training=False, routing = 0):
         # Input Layer, Reshape to [batch, height, width, channel]
-        self.input = tf.reshape(self.x, [conf.batch_size, 28, 28, 1])
-        assert self.input.get_shape() == (conf.batch_size, 28, 28, 1)
+
 
         # ReLU Conv1
         with tf.variable_scope('conv1_layer'):
@@ -245,3 +323,5 @@ class CapsNet:
         decoded = tf.reshape(decoded, shape=(conf.batch_size, -1))
         rloss = tf.reduce_mean(tf.square(decoded - origin))
         return rloss
+
+    #def digit_caps_model(self, inputs, targets)
