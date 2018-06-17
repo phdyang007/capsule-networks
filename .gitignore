@@ -1,2 +1,3 @@
 logdir/*
 results/*
+*.pyc
