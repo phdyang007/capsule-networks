@@ -88,10 +88,12 @@ class CapsNet:
         dcap = self.build_model_capnets(is_training=True)
         if routing == 1:
             self.dloss = tf.nn.l2_loss(dcap-self.dcap_gt)
-        trainable_variables = tf.trainable_variables()
-        self.cnn_vars = [var for var in trainable_variables if 'dcap_init' in var.name]
-        self.cap_vars = [var for var in trainable_variables if 'cap_nets' in var.name]
-
+        self.trainable_variables = tf.trainable_variables()
+        self.global_step = tf.Variable(0, name='global_step', trainable=False)
+        self.cnn_vars = [var for var in self.trainable_variables if 'dcap_init' in var.name]
+        self.cap_vars = [var for var in self.trainable_variables if 'cap_nets' in var.name]
+        self.cnn_op = tf.train.AdamOptimizer(conf.learning_rate).minimize(self.mloss, global_step=self.global_step, var_list=self.cnn_vars)
+        self.cap_op = tf.train.AdamOptimizer(conf.learning_rate).minimize(self.dloss, global_step=self.global_step, var_list=self.cap_vars) 
 
     def build_model(self, is_training=False, routing = 0):
         # Input Layer, Reshape to [batch, height, width, channel]
