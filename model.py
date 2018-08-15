@@ -8,7 +8,7 @@ class CapsNet:
     def __init__(self, is_training=False, routing = 0, dcap_init = 0):
         self.graph = tf.Graph()
 
-
+        self.is_training = is_training
         with self.graph.as_default():
             if is_training:
                 self.x, self.y, self.num_batch = get_batch_data()
@@ -74,7 +74,7 @@ class CapsNet:
 
             # Digit Caps
             with tf.variable_scope('digit_caps'):
-                dcap = self.digit_caps(
+                dcap, _, _ = self.digit_caps(
                     inputs=pcaps,
                     num_iters=3,
                     num_caps=10,
@@ -118,12 +118,20 @@ class CapsNet:
 
         # Digit Caps
         with tf.variable_scope('digit_caps'):
-            dcaps = self.digit_caps(
-                inputs=pcaps,
-                num_iters=3,
-                num_caps=10,
-                routing =routing,
-            )
+            if (routing==1):
+                dcaps, self.routing_loss, self.routing_loss_norm = self.digit_caps(
+                    inputs=pcaps,
+                    num_iters=3,
+                    num_caps=10,
+                    routing =routing,
+                )
+            else:
+                dcaps = self.digit_caps(
+                    inputs=pcaps,
+                    num_iters=10,
+                    num_caps=10,
+                    routing =routing,
+                )
             assert dcaps.get_shape() == (conf.batch_size, 10, 16)
 
         # Prediction
@@ -136,6 +144,8 @@ class CapsNet:
         # Reconstruction
         with tf.variable_scope('reconstruction'):
             targets = tf.argmax(self.y, axis=1) if is_training else self.preds
+            self.accuracy = tf.reduce_sum(tf.cast(tf.equal(self.preds, targets), tf.float32))
+            self.accuracy = self.accuracy / conf.batch_size
             self.decoded = self.reconstruction(
                 inputs=dcaps,
                 targets=targets,
@@ -161,13 +171,40 @@ class CapsNet:
         # Train
         self.global_step = tf.Variable(0, name='global_step', trainable=False)
         self.loss = self.mloss + 0.0005 * self.rloss
-        self.train_vars = [(v.name, v.shape) for v in tf.trainable_variables()]
+        # self.train_vars = [(v.name, v.shape) for v in tf.trainable_variables()]
+        self.train_vars = [v for v in tf.trainable_variables()]
         self.train_op = tf.train.AdamOptimizer(conf.learning_rate).minimize(self.loss, global_step=self.global_step)
+
+        # update: separate training
+        self.reconstruction_vars = [v for v in self.train_vars if 'reconstruction_var' in v.name]
+        self.routing_vars = [v for v in self.train_vars if 'routing_var' in v.name]
+        self.caps_vars = [v for v in self.train_vars if not (v in self.routing_vars) and not(v in
+self.reconstruction_vars)]
+
+        self.train_caps_op = tf.train.AdamOptimizer(conf.learning_rate).minimize(self.mloss,
+var_list=self.caps_vars)
+        self.train_reconstruction_op = tf.train.AdamOptimizer(conf.learning_rate).minimize(self.rloss,
+var_list=self.reconstruction_vars)
+        if (len(self.routing_vars) > 0):
+
+            # add mask to routing loss
+            if (self.is_training):
+                label = tf.expand_dims(self.y, 2)
+                # label = tf.cast(label, tf.float32)
+                self.routing_loss = tf.multiply(self.routing_loss, label)
+                self.routing_loss_norm = tf.multiply(self.routing_loss_norm, label)
+
+            self.routing_loss = tf.reduce_mean(self.routing_loss)
+            self.routing_loss_norm = tf.reduce_mean(self.routing_loss_norm)
+
+            self.train_routing_op = tf.train.AdamOptimizer(conf.learning_rate).minimize(self.routing_loss, var_list=self.routing_vars)
+            self.train_routing_norm_op = tf.train.AdamOptimizer(conf.learning_rate).minimize(self.routing_loss_norm, var_list=self.routing_vars)
 
         # Summary
         tf.summary.scalar('margin_loss', self.mloss)
         tf.summary.scalar('reconstruction_loss', self.rloss)
         tf.summary.scalar('total_loss', self.loss)
+
         self.summary = tf.summary.merge_all()
 
         return
@@ -193,6 +230,7 @@ class CapsNet:
 #        assert convs.get_shape() == (conf.batch_size, 32*6*6, 8)
 
         # Convolution (batched)
+        """
         convs = tf.layers.conv2d(
             inputs=inputs,
             filters=32*8,
@@ -205,7 +243,51 @@ class CapsNet:
 
         # Squash
         pcaps = self.squash(convs)
+
+        """
+        pcaps = self.PrimaryCapsRCNN(inputs)
         return pcaps
+
+    def PrimaryCapsRCNN(self, input, num_outputs=32, vec_len=8, conv_num=4, kernel_size=9, padding='VALID', stride=1):
+        print(input.get_shape())
+        batch_size = conf.batch_size
+        capsules = []
+        for caps in range(vec_len):
+            # capsule = slim.repeat(input, conv_num, slim.conv2d, num_outputs, [kernel_size, kernel_size], scope=str(caps), activation_fn=tf.nn.relu, padding=self.padding, stride=stride)
+            # capsule = slim.max_pool2d(capsule, [2, 2], scope=str(caps))
+            if caps in [0, 1, 2]:
+                capsule = slim.conv2d(input, num_outputs, [kernel_size, kernel_size], scope=str(caps), padding=padding, stride=stride)
+                capsule = self.RCL(capsule, caps, num_outputs)
+                # capsule = [batch_size, w, h, num_outputs]
+                capsule = slim.max_pool2d(capsule, [2, 2], scope=str(caps))
+                # capsule = [batch_size, w, h, num_outputs]
+            elif caps in [5, 6, 7, 8, 9]:
+                capsule = slim.conv2d(input, num_outputs, [kernel_size, kernel_size], scope=str(caps),
+padding=padding, stride=stride*2, weights_initializer=tf.truncated_normal_initializer(stddev=0.1))
+            else:
+                capsule = slim.conv2d(input, num_outputs, [kernel_size, kernel_size], scope=str(caps),
+padding=padding, stride=stride*2, weights_initializer=tf.zeros_initializer())
+            capsule = slim.dropout(capsule, 0.2, scope=str(caps))
+            capsule = tf.reshape(capsule, shape=(batch_size, -1, 1, 1))
+            # capsule = [batch_size, w * h * num_outputs, 1, 1]
+            capsules.append(capsule)
+        capsules = tf.concat(capsules, axis=2)
+        print(capsules.get_shape())
+        # capsules = [batch_size, capsules_num, vec_len, 1]
+        return self.squash(tf.reshape(capsules, shape=(conf.batch_size, 32*6*6, 8)))
+
+    def RCL(self, input, caps, num_outputs):
+        input = slim.batch_norm(input)
+        conv1 = slim.conv2d(input, num_outputs, [3, 3], reuse=None, scope='PRCL_'+str(caps))
+        rcl1 = tf.add(input, conv1)
+        bn1 = slim.batch_norm(rcl1)
+        conv2 = slim.conv2d(bn1, num_outputs, [3, 3], scope='PRCL_'+str(caps), reuse=True)
+        rcl2 = tf.add(input, conv2)
+        bn2 = slim.batch_norm(rcl2)
+        conv3 = slim.conv2d(bn2, num_outputs, [3, 3], scope='PRCL_'+str(caps), reuse=True)
+        rcl3 = tf.add(input, conv3)
+        bn3 = slim.batch_norm(rcl3)
+        return bn3
 
     def digit_caps(self, inputs, num_iters, num_caps, routing=0):
         #routing methods: 0: dynamic routing, 1 for bp routing
@@ -227,8 +309,14 @@ class CapsNet:
         # uhat
         uhat = tf.matmul(u, w, transpose_a=True)  # [batch_size, 32*6*6, num_caps, 1, 16]
         uhat = tf.reshape(uhat, [conf.batch_size, 32*6*6, num_caps, 16])  # [batch_size, 32*6*6, num_caps, 16]
+
+        if (self.is_training):
+            label = tf.expand_dims(self.y, 1)
+            label = tf.expand_dims(label, 3)
+            # label = [batch_size, 1, 10, 1]
         if routing == 0:
             uhat_stop_grad = tf.stop_gradient(uhat)
+            uhat_norm = tf.nn.l2_normalize(uhat_stop_grad, axis=-1)
             assert uhat.get_shape() == (conf.batch_size, 32*6*6, num_caps, 16)
 
             for r in range(num_iters):
@@ -252,16 +340,36 @@ class CapsNet:
                         
                         # update b
                         vr = tf.reshape(v, [conf.batch_size, 1, num_caps, 16])
-                        a = tf.reduce_sum(tf.reduce_sum(tf.multiply(uhat_stop_grad, vr), axis=0), axis=2)  # [32*6*6, num_caps]
+                        vr_norm = tf.nn.l2_normalize(vr, axis=-1)
+                        # add mask
+                        if (self.is_training):
+                            vr_norm = tf.multiply(vr_norm, label)
+                        # a = tf.reduce_sum(tf.reduce_sum(tf.multiply(uhat_stop_grad, vr), axis=0), axis=2)  # [32*6*6, num_caps]
+                        a = tf.reduce_sum(tf.reduce_sum(tf.multiply(uhat_norm, vr_norm), axis=0), axis=2)  # [32*6*6, num_caps]
                         bij = bij + a
                         assert a.get_shape() == (32*6*6, num_caps)
         if routing == 1:
-            bij = tf.get_variable('bij', shape=(32*6*6, num_caps), initializer=tf.constant_initializer(0.0))
-            cij = tf.nn.softmax(bij)
-            cij = tf.tile(tf.reshape(cij, [1, 32*6*6, num_caps, 1]),
+
+            # update: training routing parameters with routing_loss / routing_loss_norm
+            with tf.variable_scope('routing_var'):
+                bij = tf.get_variable('bij', shape=(32*6*6, num_caps), initializer=tf.constant_initializer(0.0))
+                cij = tf.nn.softmax(bij, axis=0)
+                cij = tf.tile(tf.reshape(cij, [1, 32*6*6, num_caps, 1]),
                         [conf.batch_size, 1, 1, 1])  # [batch_size, 32*6*6, num_caps, 1]
-            s = tf.reduce_sum(tf.multiply(uhat, cij), axis=1)  # [batch_size, num_caps, 16]
-            v = self.squash(s)  # [batch_size, num_caps, 16]
+
+                s = tf.reduce_sum(tf.multiply(uhat, cij), axis=1)  # [batch_size, num_caps, 16]
+                v = self.squash(s)  # [batch_size, num_caps, 16]
+
+                routing_loss = -1 * tf.reduce_sum(tf.multiply(tf.reshape(v, shape=(conf.batch_size, 1,
+num_caps, 16)), uhat), axis=1)
+
+                uhat_norm = tf.nn.l2_normalize(uhat, axis=-1)
+                v_norm = tf.nn.l2_normalize(v, axis=-1)
+                routing_loss_norm = -1 * tf.reduce_sum(tf.multiply(tf.reshape(v_norm, shape=(conf.batch_size,
+1, num_caps, 16)), uhat_norm), axis=1)
+
+            return v, tf.reshape(routing_loss, shape=(conf.batch_size, num_caps, 16)), tf.reshape(routing_loss_norm, shape=(conf.batch_size, num_caps, 16))
+
         return v
 
     def squash(self, s):
@@ -286,7 +394,7 @@ class CapsNet:
             masked_inputs = tf.gather_nd(inputs, enum_indices)
             assert masked_inputs.get_shape() == (conf.batch_size, 16)
 
-        with tf.variable_scope('reconstruction'):
+        with tf.variable_scope('reconstruction_var'):
             fc_relu1 = tf.contrib.layers.fully_connected(
                 inputs=masked_inputs,
                 num_outputs=512,
