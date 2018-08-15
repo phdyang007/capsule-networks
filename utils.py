@@ -5,6 +5,7 @@ import scipy
 import tensorflow as tf
 from config import Config as conf
 
+from cifar import load_cifar
 
 def load_from_file(path, mode):
     if path.startswith('gs://'):  # For google cloud ml-engine. pickle
@@ -44,17 +45,21 @@ def load_mnist(path, is_training):
 
 
 def get_batch_data():
-    trX, trY = load_mnist(conf.dataset, is_training=True)
+    if 'mnist' in conf.dataset:
+        trX, trY = load_mnist(conf.dataset, is_training=True)
+ 
+    else:
+        trX, trY = load_cifar(conf.dataset, is_training=True)
 
     num_batch = int(trX.get_shape()[0] // conf.batch_size)
-
+ 
     data_queues = tf.train.slice_input_producer([trX, trY])
     X, Y = tf.train.shuffle_batch(data_queues, num_threads=8,
                                   batch_size=conf.batch_size,
                                   capacity=conf.batch_size * 64,
                                   min_after_dequeue=conf.batch_size * 32,
                                   allow_smaller_final_batch=False)
-
+ 
     return X, Y, num_batch
 
 
