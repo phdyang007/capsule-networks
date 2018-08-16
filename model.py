@@ -125,12 +125,19 @@ class CapsNet:
                     num_caps=10,
                     routing =routing,
                 )
-            else:
+            elif (routing == 0):
                 dcaps = self.digit_caps(
                     inputs=pcaps,
                     num_iters=10,
                     num_caps=10,
                     routing =routing,
+                )
+            elif (routing == 2):
+                dcaps, self.routing_loss, self.cregular = self.digit_caps(
+                    inputs=pcaps,
+                    num_iters=3,
+                    num_caps=10,
+                    routing=routing,
                 )
             assert dcaps.get_shape() == (conf.batch_size, 10, 16)
 
@@ -173,7 +180,6 @@ class CapsNet:
         self.loss = self.mloss + 0.0005 * self.rloss
         # self.train_vars = [(v.name, v.shape) for v in tf.trainable_variables()]
         self.train_vars = [v for v in tf.trainable_variables()]
-        self.train_op = tf.train.AdamOptimizer(conf.learning_rate).minimize(self.loss, global_step=self.global_step)
 
         # update: separate training
         self.reconstruction_vars = [v for v in self.train_vars if 'reconstruction_var' in v.name]
@@ -185,7 +191,10 @@ self.reconstruction_vars)]
 var_list=self.caps_vars)
         self.train_reconstruction_op = tf.train.AdamOptimizer(conf.learning_rate).minimize(self.rloss,
 var_list=self.reconstruction_vars)
-        if (len(self.routing_vars) > 0):
+
+        self.train_op = tf.train.AdamOptimizer(conf.learning_rate).minimize(self.loss, var_list=self.caps_vars+self.reconstruction_vars, global_step=self.global_step)
+
+        if (routing == 1):
 
             # add mask to routing loss
             if (self.is_training):
@@ -199,6 +208,15 @@ var_list=self.reconstruction_vars)
 
             self.train_routing_op = tf.train.AdamOptimizer(conf.learning_rate).minimize(self.routing_loss, var_list=self.routing_vars)
             self.train_routing_norm_op = tf.train.AdamOptimizer(conf.learning_rate).minimize(self.routing_loss_norm, var_list=self.routing_vars)
+
+        elif (routing == 2):
+            if (self.is_training):
+                # label = 2 * self.y - 1
+                # self.routing_loss = tf.multiply(self.routing_loss, label)
+                self.routing_loss = tf.losses.softmax_cross_entropy(self.y,
+self.routing_loss, label_smoothing=0.1)
+            self.routing_loss = tf.reduce_mean(self.routing_loss) + 0.001 * tf.reduce_mean(self.cregular)
+            self.train_routing_op = tf.train.AdamOptimizer(conf.learning_rate).minimize(self.routing_loss, var_list=self.routing_vars)
 
         # Summary
         tf.summary.scalar('margin_loss', self.mloss)
@@ -369,6 +387,33 @@ num_caps, 16)), uhat), axis=1)
 1, num_caps, 16)), uhat_norm), axis=1)
 
             return v, tf.reshape(routing_loss, shape=(conf.batch_size, num_caps, 16)), tf.reshape(routing_loss_norm, shape=(conf.batch_size, num_caps, 16))
+
+        # capsnet
+        if routing == 2:
+            with tf.variable_scope('routing_var'):
+                bij = tf.get_variable('bij', shape=(32*6*6, num_caps),
+initializer=tf.truncated_normal_initializer(0.0))
+                bij = tf.nn.softmax(bij, axis=0)
+                # cancel softmax normalize
+                cij = tf.tile(tf.reshape(bij, [1, 32*6*6, num_caps, 1]),
+[conf.batch_size, 1, 1, 1])
+                cij = tf.reshape(cij, shape=(conf.batch_size, 32*6*6,
+num_caps, 1))
+                # cij = [batch_size, 32*6*6, num_caps]
+                d = tf.reduce_sum(tf.multiply(uhat, cij), axis=1)
+                # d = [batch_size, num_caps, 16]
+                # cancel squash
+                # d = tf.reshape(d, shape=(conf.batch_size, num_caps, 16))
+                dlen = tf.reduce_sum(tf.square(d), axis=-1)
+                # dlen = [batch_size, num_caps]
+                cregular = tf.reduce_sum(tf.square(cij), axis=1)
+                cregular = tf.reshape(cregular, shape=(conf.batch_size, num_caps))
+                # cregular = [batch_size, num_caps]
+
+                routing_loss = dlen
+
+                return self.squash(d), routing_loss, cregular
+                
 
         return v
 
