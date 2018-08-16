@@ -391,6 +391,22 @@ num_caps, 16)), uhat), axis=1)
         # capsnet
         if routing == 2:
             with tf.variable_scope('routing_var'):
+                #TODO  shuhe  please check the following code
+                #Do not stack them, maybe variable names will be destroyed.
+                #we need 10 ops for each digital caps; the objective should be the decap length if self.
+                """Each Parameter set associated with each digital caps should have their own variable scope e.g.
+                cijs=[]
+                dcaps=[length of each decaps]
+
+                dcap_variables=[10 variable scopes]
+                dcap_ops =[10 decap ops] 
+                for dc_id in xrange(num_caps): ## create 10 c's for each digitcaps
+                    cijs.append(tf.get_variable('c'+str(dc_id), shape=(32*6*6),
+initializer=tf.truncated_normal_initializer(0.0)))
+                for c in cijs:
+                    #tile c for batch
+                    dcaps.append(XXXXXXXXX)   #TODO calculate dcaps for whole batch                                            
+                """
                 bij = tf.get_variable('bij', shape=(32*6*6, num_caps),
 initializer=tf.truncated_normal_initializer(0.0))
                 bij = tf.nn.softmax(bij, axis=0)
