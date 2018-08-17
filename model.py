@@ -133,12 +133,15 @@ class CapsNet:
                     routing =routing,
                 )
             elif (routing == 2):
-                dcaps, self.routing_loss, self.cregular = self.digit_caps(
+                dcaps, self.dlen, self.clen = self.digit_caps(
                     inputs=pcaps,
                     num_iters=3,
                     num_caps=10,
                     routing=routing,
                 )
+                # dcaps = [batch_size, num_caps, caps_len]
+                # dlen = [batch_size, num_caps]
+                # clen = [batch_size, num_caps]
             assert dcaps.get_shape() == (conf.batch_size, 10, 16)
 
         # Prediction
@@ -210,14 +213,32 @@ var_list=self.reconstruction_vars)
             self.train_routing_norm_op = tf.train.AdamOptimizer(conf.learning_rate).minimize(self.routing_loss_norm, var_list=self.routing_vars)
 
         elif (routing == 2):
+            routing_op = []
+            # routing_op: list of routing_o
             if (self.is_training):
-                # label = 2 * self.y - 1
+                label = 2 * self.y - 1
                 # self.routing_loss = tf.multiply(self.routing_loss, label)
+                # label = tf.expand_dims(self.y, 2)
+                # label = [batch_size, 10, 1]
+                for idx in range(10):
+                    # loss
+                    label_mask = tf.reshape(tf.one_hot([idx], depth=10), shape=[1, 10])
+                    # label_mask = [batch_size, 10]
+                    len_loss = tf.multiply(self.dlen, label_mask)
+                    # len_loss = [batch_size, 10]
+                    routing_loss = len_loss - 0.001 * self.clen
+                    routing_loss = -1 * routing_loss * label
+                    rop = tf.train.AdamOptimizer(conf.learning_rate).minimize(routing_loss, var_list=self.routing_vars)
+                    routing_op.append(rop)
+                     
+                self.routing_loss = tf.reduce_mean(tf.multiply(label, self.dlen))
+                self.train_routing_op = tf.group(routing_op)
+                """
                 self.routing_loss = tf.losses.softmax_cross_entropy(self.y,
 self.routing_loss, label_smoothing=0.1)
             self.routing_loss = tf.reduce_mean(self.routing_loss) + 0.001 * tf.reduce_mean(self.cregular)
             self.train_routing_op = tf.train.AdamOptimizer(conf.learning_rate).minimize(self.routing_loss, var_list=self.routing_vars)
-
+                """
         # Summary
         tf.summary.scalar('margin_loss', self.mloss)
         tf.summary.scalar('reconstruction_loss', self.rloss)
@@ -400,12 +421,37 @@ num_caps, 16)), uhat), axis=1)
 
                 dcap_variables=[10 variable scopes]
                 dcap_ops =[10 decap ops] 
-                for dc_id in xrange(num_caps): ## create 10 c's for each digitcaps
+                for dc_id in 
                     cijs.append(tf.get_variable('c'+str(dc_id), shape=(32*6*6),
 initializer=tf.truncated_normal_initializer(0.0)))
                 for c in cijs:
                     #tile c for batch
                     dcaps.append(XXXXXXXXX)   #TODO calculate dcaps for whole batch                                            
+                """
+                # squash P
+                uhat = self.squash(uhat)
+                # uhat = [batch_size, 32*6*6, num_caps, 16]
+                cijs = []
+                clens = []
+                # cijs = [num_caps, 32*6*6]
+                dlens = []
+                # dlens = [num_caps]
+                for idx in range(num_caps):
+                    cijs.append(tf.get_variable('c'+str(idx), shape=(32*6*6), initializer=tf.truncated_normal_initializer(0.0)))
+                    clens.append(tf.reduce_sum(tf.square(cijs[idx])))
+                clens = tf.tile(tf.reshape(clens, [1, num_caps]), [conf.batch_size, 1]) 
+                # cijs_tensor = tf.concat(cijs, 0)
+                cijs_tensor = tf.reshape(cijs, shape=[num_caps, 32*6*6])
+                # cijs_tensor = [num_caps, 32*6*6]
+                cijs_tensor = tf.transpose(cijs_tensor, [1, 0])
+                # cijs_tensor = [32*6*6, num_caps]
+                cijs_tensor = tf.tile(tf.reshape(cijs_tensor, [1, 32*6*6, num_caps, 1]), [conf.batch_size, 1, 1, 1])
+                # cijs_tensor = [batch_size, 32*6*6, num_caps, 1]
+                d = tf.reduce_sum(tf.multiply(uhat, cijs_tensor), axis=1)
+                # d = [batch_size, num_caps, 16]
+                dlen = tf.reduce_sum(tf.square(d), axis=-1)
+                # d = [batch_size, num_caps]
+                return d, dlen, clens
                 """
                 bij = tf.get_variable('bij', shape=(32*6*6, num_caps),
 initializer=tf.truncated_normal_initializer(0.0))
@@ -429,7 +475,7 @@ num_caps, 1))
                 routing_loss = dlen
 
                 return self.squash(d), routing_loss, cregular
-                
+                """
 
         return v
 
