@@ -226,7 +226,7 @@ var_list=self.reconstruction_vars)
                     # label_mask = [batch_size, 10]
                     len_loss = tf.multiply(self.dlen, label_mask)
                     # len_loss = [batch_size, 10]
-                    routing_loss = len_loss - 0.001 * self.clen
+                    routing_loss = len_loss - 0.001 * tf.multiply(self.clen, label_mask)
                     routing_loss = -1 * routing_loss * label
                     rop = tf.train.AdamOptimizer(conf.learning_rate).minimize(routing_loss, var_list=self.routing_vars)
                     routing_op.append(rop)
@@ -434,8 +434,6 @@ initializer=tf.truncated_normal_initializer(0.0)))
                 cijs = []
                 clens = []
                 # cijs = [num_caps, 32*6*6]
-                dlens = []
-                # dlens = [num_caps]
                 for idx in range(num_caps):
                     cijs.append(tf.get_variable('c'+str(idx), shape=(32*6*6), initializer=tf.truncated_normal_initializer(0.0)))
                     clens.append(tf.reduce_sum(tf.square(cijs[idx])))
