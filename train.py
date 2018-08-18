@@ -9,7 +9,7 @@ from model import CapsNet
 
 def main(_):
     # Construct Graph
-    capsNet = CapsNet(is_training=True, routing=0)
+    capsNet = CapsNet(is_training=True, routing=2)
     print('[+] Graph is constructed')
     config = tf.ConfigProto()
     # use GPU0
@@ -33,7 +33,7 @@ def main(_):
             # from tqdm import tqdm
             # for step in tqdm(range(capsNet.num_batch), total=capsNet.num_batch, ncols=70, leave=False, unit='b'):
             for step in range(capsNet.num_batch):
-                _, loss, rloss, mloss = sess.run([capsNet.train_op, capsNet.loss, capsNet.rloss, capsNet.mloss])
+                _, loss, rloss, mloss = sess.run([capsNet.train_op, capsNet.loss, capsNet.routing_loss, capsNet.mloss])
                 losses.append(loss)
                 if step % 100 == 0:
                     print("%s: epoch[%g/%g], step[%g/%g], loss[%f], rloss[%f], mloss[%f]"%(datetime.now(), epoch, conf.num_epochs, step, capsNet.num_batch, loss, rloss, mloss))

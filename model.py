@@ -7,7 +7,7 @@ from utils import *
 class CapsNet:
     def __init__(self, is_training=False, routing = 0, dcap_init = 0):
         self.graph = tf.Graph()
-
+        self.is_training=is_training
 
         with self.graph.as_default():
             if is_training:
@@ -118,7 +118,7 @@ class CapsNet:
 
         # Digit Caps
         with tf.variable_scope('digit_caps'):
-            dcaps = self.digit_caps(
+            dcaps, self.routing_loss = self.digit_caps(
                 inputs=pcaps,
                 num_iters=3,
                 num_caps=10,
@@ -151,22 +151,18 @@ class CapsNet:
                 labels=self.y,
             )
 
-        # Reconstruction Loss
-        with tf.variable_scope('reconsturction_loss'):
-            self.rloss = self.reconstruction_loss(
-                origin=self.x,
-                decoded=self.decoded,
-            )
+
 
         # Train
         self.global_step = tf.Variable(0, name='global_step', trainable=False)
-        self.loss = self.mloss + 0.0005 * self.rloss
+        #self.loss = self.mloss + 0.0005 * self.rloss
+        self.loss = self.mloss 
+
         self.train_vars = [(v.name, v.shape) for v in tf.trainable_variables()]
         self.train_op = tf.train.AdamOptimizer(conf.learning_rate).minimize(self.loss, global_step=self.global_step)
 
         # Summary
         tf.summary.scalar('margin_loss', self.mloss)
-        tf.summary.scalar('reconstruction_loss', self.rloss)
         tf.summary.scalar('total_loss', self.loss)
         self.summary = tf.summary.merge_all()
 
@@ -262,7 +258,29 @@ class CapsNet:
                         [conf.batch_size, 1, 1, 1])  # [batch_size, 32*6*6, num_caps, 1]
             s = tf.reduce_sum(tf.multiply(uhat, cij), axis=1)  # [batch_size, num_caps, 16]
             v = self.squash(s)  # [batch_size, num_caps, 16]
-        return v
+        if routing == 2:
+            bij = tf.get_variable('bij', shape=(32*6*6, num_caps), initializer=tf.constant_initializer(1.0))
+            #bij = tf.get_variable('bij', shape=(32*6*6, num_caps), initializer=tf.contrib.layers.xavier_initializer())
+            #cij = tf.nn.softmax(bij, axis=0) 
+            cij=bij
+
+            if self.is_training:
+                label = 2*self.y-1.0
+
+                cij_trans=tf.transpose(cij)  #10 x 3266
+                cij_lens=tf.reduce_mean(tf.square(cij_trans), axis=1) #10 , 
+                cij_regularization=tf.reduce_sum(tf.multiply(label, tf.tile(tf.reshape(cij_lens, [1, 10]), [conf.batch_size, 1])), axis=1) #batch x 10
+            cij = tf.tile(tf.reshape(cij, [1, 32*6*6, num_caps, 1]),
+                        [conf.batch_size, 1, 1, 1])  # [batch_size, 32*6*6, num_caps, 1]
+            s = tf.reduce_sum(tf.multiply(uhat, cij), axis=1)  # [batch_size, num_caps, 16]
+            v = self.squash(s)  # [batch_size, num_caps, 16]
+            if self.is_training:
+                v_len = tf.multiply(tf.reduce_sum(tf.square(v), axis=-1),label)  #batch num_caps
+                v_loss= tf.reduce_sum(v_len, axis=-1)
+                c_loss= cij_regularization
+                return v, tf.reduce_mean(0.0001*c_loss-v_loss)
+            else:
+                return v, 0
 
     def squash(self, s):
         s_l2 = tf.sqrt(tf.reduce_sum(tf.square(s), axis=-1, keep_dims=True) + conf.eps)
