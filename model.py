@@ -180,7 +180,8 @@ class CapsNet:
 
         # Train
         self.global_step = tf.Variable(0, name='global_step', trainable=False)
-        self.loss = self.mloss + 0.0005 * self.rloss
+        self.lr = tf.train.exponential_decay(conf.learning_rate, global_step=self.global_step, decay_steps=10, decay_rate=0.9)
+        self.loss = self.mloss + 0.392 * self.rloss
         # self.train_vars = [(v.name, v.shape) for v in tf.trainable_variables()]
         self.train_vars = [v for v in tf.trainable_variables()]
 
@@ -190,12 +191,12 @@ class CapsNet:
         self.caps_vars = [v for v in self.train_vars if not (v in self.routing_vars) and not(v in
 self.reconstruction_vars)]
 
-        self.train_caps_op = tf.train.AdamOptimizer(conf.learning_rate).minimize(self.mloss,
+        self.train_caps_op = tf.train.AdamOptimizer(self.lr).minimize(self.mloss,
 var_list=self.caps_vars)
-        self.train_reconstruction_op = tf.train.AdamOptimizer(conf.learning_rate).minimize(self.rloss,
+        self.train_reconstruction_op = tf.train.AdamOptimizer(self.lr).minimize(self.rloss,
 var_list=self.reconstruction_vars)
 
-        self.train_op = tf.train.AdamOptimizer(conf.learning_rate).minimize(self.loss, var_list=self.caps_vars+self.reconstruction_vars, global_step=self.global_step)
+        self.train_op = tf.train.AdamOptimizer(self.lr).minimize(self.loss, var_list=self.caps_vars+self.reconstruction_vars, global_step=self.global_step)
 
         if (routing == 1):
 
@@ -209,8 +210,8 @@ var_list=self.reconstruction_vars)
             self.routing_loss = tf.reduce_mean(self.routing_loss)
             self.routing_loss_norm = tf.reduce_mean(self.routing_loss_norm)
 
-            self.train_routing_op = tf.train.AdamOptimizer(conf.learning_rate).minimize(self.routing_loss, var_list=self.routing_vars)
-            self.train_routing_norm_op = tf.train.AdamOptimizer(conf.learning_rate).minimize(self.routing_loss_norm, var_list=self.routing_vars)
+            self.train_routing_op = tf.train.AdamOptimizer(self.lr).minimize(self.routing_loss, var_list=self.routing_vars)
+            self.train_routing_norm_op = tf.train.AdamOptimizer(conf.learn_rate).minimize(self.routing_loss_norm, var_list=self.routing_vars)
 
         elif (routing == 2):
             routing_op = []
@@ -226,9 +227,9 @@ var_list=self.reconstruction_vars)
                     # label_mask = [batch_size, 10]
                     len_loss = tf.multiply(self.dlen, label_mask)
                     # len_loss = [batch_size, 10]
-                    routing_loss = len_loss - 0.001 * tf.multiply(self.clen, label_mask)
+                    routing_loss = len_loss - 0.0001 * tf.multiply(self.clen, label_mask)
                     routing_loss = -1 * routing_loss * label
-                    rop = tf.train.AdamOptimizer(conf.learning_rate).minimize(routing_loss, var_list=self.routing_vars)
+                    rop = tf.train.AdamOptimizer(self.lr).minimize(routing_loss, var_list=self.routing_vars)
                     routing_op.append(rop)
                      
                 self.routing_loss = tf.reduce_mean(tf.multiply(label, self.dlen))
@@ -269,7 +270,6 @@ self.routing_loss, label_smoothing=0.1)
 #        assert convs.get_shape() == (conf.batch_size, 32*6*6, 8)
 
         # Convolution (batched)
-        """
         convs = tf.layers.conv2d(
             inputs=inputs,
             filters=32*8,
@@ -283,8 +283,7 @@ self.routing_loss, label_smoothing=0.1)
         # Squash
         pcaps = self.squash(convs)
 
-        """
-        pcaps = self.PrimaryCapsRCNN(inputs)
+        # pcaps = self.PrimaryCapsRCNN(inputs)
         return pcaps
 
     def PrimaryCapsRCNN(self, input, num_outputs=32, vec_len=8, conv_num=4, kernel_size=9, padding='VALID', stride=1):
