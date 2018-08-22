@@ -159,7 +159,10 @@ class CapsNet:
         self.loss = self.mloss 
 
         self.train_vars = [(v.name, v.shape) for v in tf.trainable_variables()]
-        self.train_op = tf.train.AdamOptimizer(conf.learning_rate).minimize(self.loss, global_step=self.global_step)
+        self.cnn_vars = [var for var in tf.trainable_variables() if not 'bij' in var.name]
+        self.rt_vars = [var for var in tf.trainable_variables() if 'bij' in var.name]
+        self.train_op = tf.train.AdamOptimizer(conf.learning_rate).minimize(self.loss, var_list=self.cnn_vars, global_step=self.global_step)
+        self.routing_op =tf.train.AdamOptimizer(conf.learning_rate).minimize(self.routing_loss, var_list=self.rt_vars, global_step=self.global_step)
 
         # Summary
         tf.summary.scalar('margin_loss', self.mloss)
@@ -269,7 +272,8 @@ class CapsNet:
 
                 cij_trans=tf.transpose(cij)  #10 x 3266
                 cij_lens=tf.reduce_mean(tf.square(cij_trans), axis=1) #10 , 
-                cij_regularization=tf.reduce_sum(tf.multiply(label, tf.tile(tf.reshape(cij_lens, [1, 10]), [conf.batch_size, 1])), axis=1) #batch x 10
+                #cij_regularization=tf.reduce_sum(tf.multiply(label, tf.tile(tf.reshape(cij_lens, [1, 10]), [conf.batch_size, 1])), axis=1) #batch x 10
+                cij_regularization=tf.reduce_sum(tf.tile(tf.reshape(cij_lens, [1, 10]), [conf.batch_size, 1]), axis=1) #batch x 10
             cij = tf.tile(tf.reshape(cij, [1, 32*6*6, num_caps, 1]),
                         [conf.batch_size, 1, 1, 1])  # [batch_size, 32*6*6, num_caps, 1]
             s = tf.reduce_sum(tf.multiply(uhat, cij), axis=1)  # [batch_size, num_caps, 16]
@@ -278,7 +282,7 @@ class CapsNet:
                 v_len = tf.multiply(tf.reduce_sum(tf.square(v), axis=-1),label)  #batch num_caps
                 v_loss= tf.reduce_sum(v_len, axis=-1)
                 c_loss= cij_regularization
-                return v, tf.reduce_mean(0.0001*c_loss-v_loss)
+                return v, tf.reduce_mean(0.00001*c_loss-v_loss)
             else:
                 return v, 0
 
