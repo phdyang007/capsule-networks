@@ -25,6 +25,7 @@ import time
 
 import numpy as np
 import tensorflow as tf
+import time
 
 
 from input_data.cifar10 import cifar10_input
@@ -33,6 +34,7 @@ from input_data.norb import norb_input_record
 from models import capsule_model
 from models import conv_model
 
+GPU_LIST = '0'
 FLAGS = tf.flags.FLAGS
 
 tf.flags.DEFINE_string('data_dir', None, 'The data directory.')
@@ -177,10 +179,14 @@ def train_experiment(session, result, writer, last_step, max_steps, saver,
     save_step: How often to save the model ckpt.
   """
   step = 0
+  start_time = time.time()
   for i in range(last_step, max_steps):
     step += 1
-    summary, _ = session.run([result.summary, result.train_op])
+    # summary, _ = session.run([result.summary, result.train_op])
+    summary, _, loss, _, routing_loss, correct = session.run([result.summary, result.train_op, result.loss, result.routing_op, result.routing_loss, result.correct])
     writer.add_summary(summary, i)
+    if (i % 100 == 0):
+      print('[%d]: %.2f %.4f %.4f %.4f'%(i, time.time()-start_time, loss, routing_loss, correct/128.0))
     if (i + 1) % save_step == 0:
       saver.save(
           session, os.path.join(summary_dir, 'model.ckpt'), global_step=i + 1)
@@ -266,7 +272,11 @@ def run_experiment(loader,
     max_steps: Maximum number of experiment iterations.
     save_step: How often the training model should be saved.
   """
-  session = tf.Session(config=tf.ConfigProto(allow_soft_placement=True))
+  conf = tf.ConfigProto(allow_soft_placement=True)
+  conf.gpu_options.visible_device_list = GPU_LIST
+  conf.gpu_options.allow_growth = True
+  # session = tf.Session(config=tf.ConfigProto(allow_soft_placement=True))
+  session = tf.Session(config=conf)
   init_op = tf.group(tf.global_variables_initializer(),
                      tf.local_variables_initializer())
   session.run(init_op)
@@ -542,7 +552,8 @@ def default_hparams():
       loss_type='margin',
       num_prime_capsules=32,
       padding='VALID',
-      remake=True,
+      # remake=True,
+      remake=False,
       routing=3,
       verbose=False,
   )
@@ -567,6 +578,69 @@ def main(_):
                         FLAGS.num_targets, FLAGS.dataset, FLAGS.checkpoint,
                         FLAGS.num_trials)
 
+def evaluate_all(hparams, summary_dir, num_gpus, model_type, eval_size, data_dir,
+                num_targets, dataset, validate, checkpoint=None):
+  load_dir = summary_dir + '/train/'
+  summary_dir += '/test/'
+  with tf.Graph().as_default():
+    features = get_features('test', 100, num_gpus, data_dir, num_targets,
+                            dataset, validate)
+    model = models[model_type](hparams)
+    result, _ = model.multi_gpu(features, num_gpus)
+    test_writer = tf.summary.FileWriter(summary_dir)
+    seen_step = -1
+    paused = 0
+    start_point = 0
+    end_point = 50
+    model_files = [os.path.join(load_dir, 'model.ckpt-'+str(n)) for n in range(1500, 300001, 1500)]
+    print(model_files)
+    conf = tf.ConfigProto(allow_soft_placement=True)
+    conf.gpu_options.visible_device_list = GPU_LIST
+    conf.gpu_options.allow_growth = True
+    session = tf.Session(config=conf)
+    """
+    init_op = tf.group(tf.global_variables_initializer(),
+                       tf.local_variables_initializer())
+    session.run(init_op)
+    """
+    max_steps = eval_size // 100
+
+    saver = tf.train.Saver(max_to_keep=1000)
+    fo = open('result_acc.txt', "w")
+    for idx, mp in enumerate(model_files):
+      try:
+        last_step = load_eval(saver, session, mp)
+        coord = tf.train.Coordinator()
+        threads = tf.train.start_queue_runners(sess=session, coord=coord)
+        total_correct = 0
+        total_almost = 0
+        for _ in range(max_steps):
+          summary_i, correct, almost = session.run(
+              [result.summary, result.correct, result.almost])
+          total_correct += correct
+          total_almost += almost
+       
+        total_false = max_steps * 100 - total_correct
+        total_almost_false = max_steps * 100 - total_almost
+        print('[{}] Total wrong predictions: {}, wrong percent: {}%'.format(
+            idx*1500+1500, total_false, total_false / max_steps))
+        fo.write('[{}] Total wrong predictions: {}, wrong percent: {}\n%'.format(
+            idx*1500+1500, total_false, total_false / max_steps))
+      except:
+        fo.write('[%d]:\n'%(idx*1500+1500))
+
+    fo.close()
+    test_writer.close()
+  
+def tmp():
+  hparams = default_hparams()
+  if FLAGS.hparams_override:
+    hparams.parse(FLAGS.hparams_override)
+  evaluate_all(hparams, FLAGS.summary_dir, FLAGS.num_gpus, FLAGS.model,
+           FLAGS.eval_size, FLAGS.data_dir, FLAGS.num_targets,
+           FLAGS.dataset, FLAGS.validate, FLAGS.checkpoint)
+
 
 if __name__ == '__main__':
   tf.app.run()
+  # tmp()
