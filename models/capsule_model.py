@@ -68,7 +68,8 @@ class CapsuleModel(model.Model):
                              [tf.shape(input_tensor)[0], -1, 8])
     _, _, _, height, width = capsule1.get_shape()
     input_dim = self._hparams.num_prime_capsules * height.value * width.value
-    return layers.capsule(
+    """
+    res = layers.capsule(
         input_tensor=capsule1_3d,
         input_dim=input_dim,
         output_dim=num_classes,
@@ -77,6 +78,19 @@ class CapsuleModel(model.Model):
         output_atoms=16,
         num_routing=self._hparams.routing,
         leaky=self._hparams.leaky,)
+    """
+    res, self.cij = layers.capsule(
+        input_tensor=capsule1_3d,
+        input_dim=input_dim,
+        output_dim=num_classes,
+        layer_name='capsule2',
+        input_atoms=8,
+        output_atoms=16,
+        num_routing=self._hparams.routing,
+        leaky=self._hparams.leaky,)
+    self.is_bp = True
+    self.vlen = res
+    return res
 
   def _summarize_remakes(self, features, remakes):
     """Adds an image summary consisting original, target and remake images.
@@ -138,7 +152,7 @@ class CapsuleModel(model.Model):
       targets.append((features['spare_label'], features['spare_image']))
 
     with tf.name_scope('recons'):
-      for i in xrange(features['num_targets']):
+      for i in range(features['num_targets']):
         label, image = targets[i]
         remakes.append(
             layers.reconstruction(

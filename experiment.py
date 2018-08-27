@@ -34,8 +34,9 @@ from input_data.norb import norb_input_record
 from models import capsule_model
 from models import conv_model
 
-GPU_LIST = '0'
+GPU_LIST = '3'
 FLAGS = tf.flags.FLAGS
+batch_size = 32
 
 tf.flags.DEFINE_string('data_dir', None, 'The data directory.')
 tf.flags.DEFINE_integer('eval_size', 10000, 'Size of the test dataset.')
@@ -186,7 +187,7 @@ def train_experiment(session, result, writer, last_step, max_steps, saver,
     summary, _, loss, _, routing_loss, correct = session.run([result.summary, result.train_op, result.loss, result.routing_op, result.routing_loss, result.correct])
     writer.add_summary(summary, i)
     if (i % 100 == 0):
-      print('[%d]: %.2f %.4f %.4f %.4f'%(i, time.time()-start_time, loss, routing_loss, correct/128.0))
+      print('[%d]: %.2f %.4f %.4f %.4f'%(i, time.time()-start_time, loss, routing_loss, correct/batch_size*1.0))
     if (i + 1) % save_step == 0:
       saver.save(
           session, os.path.join(summary_dir, 'model.ckpt'), global_step=i + 1)
@@ -327,7 +328,7 @@ def train(hparams, summary_dir, num_gpus, model_type, max_steps, save_step,
   summary_dir += '/train/'
   with tf.Graph().as_default():
     # Build model
-    features = get_features('train', 128, num_gpus, data_dir, num_targets,
+    features = get_features('train', batch_size, num_gpus, data_dir, num_targets,
                             dataset, validate)
     model = models[model_type](hparams)
     result, _ = model.multi_gpu(features, num_gpus)
@@ -550,6 +551,7 @@ def default_hparams():
       leaky=False,
       learning_rate=0.001,
       loss_type='margin',
+      # loss_type = 'softmax',
       num_prime_capsules=32,
       padding='VALID',
       # remake=True,
@@ -592,7 +594,7 @@ def evaluate_all(hparams, summary_dir, num_gpus, model_type, eval_size, data_dir
     paused = 0
     start_point = 0
     end_point = 50
-    model_files = [os.path.join(load_dir, 'model.ckpt-'+str(n)) for n in range(1500, 300001, 1500)]
+    model_files = [os.path.join(load_dir, 'model.ckpt-'+str(n)) for n in range(1500, 399001, 1500)]
     print(model_files)
     conf = tf.ConfigProto(allow_soft_placement=True)
     conf.gpu_options.visible_device_list = GPU_LIST

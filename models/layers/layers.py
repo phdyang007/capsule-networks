@@ -72,6 +72,32 @@ def _leaky_routing(logits, output_dim):
   return tf.split(leaky_routing, [1, output_dim], 2)[1]
 
 
+def _bprouting(votes, biases, logit_shape, num_dims, input_dim, output_dim, num_routing, leaky):
+  votes = _squash(votes)
+  with tf.variable_scope('routing_var'):
+    cij = tf.get_variable('cij', shape=(input_dim, output_dim), initializer=tf.constant_initializer(1.0))
+    # votes = [batch_size, input_dim, output_dim, 1]
+    bij = tf.reshape(cij, [1, input_dim, output_dim, 1])
+    s = tf.reduce_sum(tf.multiply(votes, bij), axis=1)
+    s += biases
+    v = s
+    # v = _squash(s)
+
+    """
+    if is_training:
+      label = y * 2 - 1.0
+      vlen = tf.multiply(tf.reduce_sum(tf.square(v), asis=-1), label)
+      closs = tf.reduce_sum(v_len, axis=-1)
+      clen = tf.reduce_mean(tf.square(tf.transpose(cij), axis=1))
+      rloss = tf.reduce_sum(tf.multiply(label, tf.reshape(clen, [1, 10])), axis=1)
+
+      routing_loss = closs + rloss
+    else:
+      routing_loss = 0
+    """
+
+    return v, cij
+      
 def _update_routing(votes, biases, logit_shape, num_dims, input_dim, output_dim,
                     num_routing, leaky):
   """Sums over scaled votes and applies squash to compute the activations.
@@ -188,6 +214,7 @@ def capsule(input_tensor,
     with tf.name_scope('routing'):
       input_shape = tf.shape(input_tensor)
       logit_shape = tf.stack([input_shape[0], input_dim, output_dim])
+      """
       activations = _update_routing(
           votes=votes_reshaped,
           biases=biases,
@@ -196,8 +223,35 @@ def capsule(input_tensor,
           input_dim=input_dim,
           output_dim=output_dim,
           **routing_args)
-    return activations
+      return activations, cij
+      """
+    return _bprouting(
+          votes=votes_reshaped,
+          biases=biases,
+          logit_shape=logit_shape,
+          num_dims=4,
+          input_dim=input_dim,
+          output_dim=output_dim,
+          **routing_args)
 
+
+def get_routing_var(cij, y, v):
+    label = y * 2 - 1.0
+    vlen = tf.multiply(tf.reduce_sum(tf.square(v), axis=-1), label)
+    vloss = tf.reduce_sum(vlen, axis=-1)
+    print(cij.get_shape())
+    print(vloss.get_shape())
+    clen = tf.reduce_mean(tf.square(tf.transpose(cij)), axis=1)
+    batch_size = vlen.get_shape()[0]
+    # closs = tf.reduce_sum(tf.multiply(label, tf.reshape(clen, [1, 10])), axis=1)
+    closs = tf.reduce_sum(tf.tile(tf.reshape(clen, [1, 10]), [batch_size, 1]), axis=1)
+
+    routing_loss = -1 * (vloss - 0.00001 * closs)
+
+    var_list = tf.trainable_variables()
+    caps_var = [v for v in var_list if not('routing_var' in v.name)]
+    routing_var = [v for v in var_list if 'routing_var' in v.name]
+    return caps_var, routing_var, tf.reduce_mean(routing_loss)
 
 def _depthwise_conv3d(input_tensor,
                       kernel,

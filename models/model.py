@@ -35,9 +35,10 @@ import tensorflow as tf
 from models.layers import layers
 
 TowerResult = collections.namedtuple('TowerResult', ('inferred', 'almost',
-                                                     'correct', 'grads'))
+                                                     'correct', 'grads', 'routing_grads'))
 JoinedResult = collections.namedtuple('JoinedResult', ('summary', 'train_op',
-                                                       'correct', 'almost'))
+                                                       'correct', 'almost', 
+                                                       'loss', 'routing_op', 'routing_loss'))
 Inferred = collections.namedtuple('Inferred',
                                   ('logits', 'remakes'))
 
@@ -53,6 +54,8 @@ class Model(object):
     Args:
       hparams: The hyperparameters for the model as tf.contrib.training.HParams.
     """
+    self.is_bp = False
+    self.cij = None
     self._hparams = hparams
     with tf.device('/cpu:0'):
       self._global_step = tf.get_variable(
@@ -68,6 +71,9 @@ class Model(object):
       learning_rate = tf.maximum(learning_rate, 1e-6)
 
       self._optimizer = tf.train.AdamOptimizer(learning_rate)
+
+      routing_lr = tf.maximum(learning_rate / 5, 1e-6)
+      self._routing_optimizer = tf.train.AdamOptimizer(routing_lr)
 
   @abc.abstractmethod
   def inference(self, features):
@@ -100,7 +106,11 @@ class Model(object):
       A namedtuple TowerResult containing the inferred values like logits and
       reconstructions, gradients and evaluation metrics.
     """
+
     with tf.device('/gpu:%d' % tower_ind):
+      _losses = []
+      _routing_losses = []
+      _acc = []
       with tf.name_scope('tower_%d' % (tower_ind)) as scope:
         inferred = self.inference(feature)
         losses, correct, almost = layers.evaluate(
@@ -109,10 +119,29 @@ class Model(object):
             num_targets=feature['num_targets'],
             scope=scope,
             loss_type=self._hparams.loss_type,)
-        tf.get_variable_scope().reuse_variables()
-        grads = self._optimizer.compute_gradients(losses)
 
-    return TowerResult(inferred, almost, correct, grads)
+        _losses.append(losses)
+        _acc.append(correct * 1.0 / 128)
+
+        tf.get_variable_scope().reuse_variables()
+        if (self.is_bp):
+          caps_var, routing_var, routing_loss = layers.get_routing_var(
+            cij = self.cij,
+            v = self.vlen,
+            y = feature['labels']
+          )
+          routing_grads = self._routing_optimizer.compute_gradients(routing_loss, var_list=routing_var)
+          grads = self._optimizer.compute_gradients(losses, var_list=caps_var)
+          _routing_losses.append(routing_loss)
+        else:
+          grads = self._optimizer.compute_gradients(losses)
+          routing_grads = 0.0
+        
+      self.loss = tf.reduce_mean(_losses)
+      self.routing_loss = tf.reduce_mean(_routing_losses)
+      self.accuracy = tf.reduce_mean(_acc)
+
+    return TowerResult(inferred, almost, correct, grads, routing_grads)
 
   def _average_gradients(self, tower_grads):
     """Calculate the average gradient for each variable across all towers.
@@ -126,7 +155,8 @@ class Model(object):
     """
     average_grads = []
     for grads_and_vars in zip(*tower_grads):
-      grads = tf.stack([g for g, _ in grads_and_vars])
+      for g in grads_and_vars: print(g)
+      grads = tf.stack([g for g, _ in grads_and_vars if not (g is None)])
       grad = tf.reduce_mean(grads, 0)
 
       v = grads_and_vars[0][1]
@@ -134,7 +164,7 @@ class Model(object):
       average_grads.append(grad_and_var)
     return average_grads
 
-  def _summarize_towers(self, almosts, corrects, tower_grads):
+  def _summarize_towers(self, almosts, corrects, tower_grads, routing_tower_grads):
     """Aggregates the results and gradients over all towers.
 
     Args:
@@ -155,7 +185,13 @@ class Model(object):
     stacked_almosts = tf.stack(almosts)
     summed_corrects = tf.reduce_sum(stacked_corrects, 0)
     summed_almosts = tf.reduce_sum(stacked_almosts, 0)
-    return JoinedResult(summary, train_op, summed_corrects, summed_almosts)
+    loss = self.loss
+    routing_grads = self._average_gradients(routing_tower_grads)
+    routing_op = self._routing_optimizer.apply_gradients(
+        routing_grads)
+    routing_loss = self.routing_loss
+
+    return JoinedResult(summary, train_op, summed_corrects, summed_almosts, loss, routing_op, routing_loss)
 
   def multi_gpu(self, features, num_gpus):
     """Build the Graph and add the train ops on multiple GPUs.
@@ -176,13 +212,17 @@ class Model(object):
     corrects = []
     tower_grads = []
     inferred = []
+    routing_tower_grads = []
     with tf.variable_scope(tf.get_variable_scope()):
-      for i in xrange(num_gpus):
+      for i in range(num_gpus):
         tower_output = self._single_tower(i, features[i])
         inferred.append(tower_output.inferred)
         almosts.append(tower_output.almost)
         corrects.append(tower_output.correct)
         tower_grads.append(tower_output.grads)
+        routing_tower_grads.append(tower_output.routing_grads)
 
-    summarized_results = self._summarize_towers(almosts, corrects, tower_grads)
+    print(tower_grads)
+
+    summarized_results = self._summarize_towers(almosts, corrects, tower_grads, routing_tower_grads)
     return summarized_results, inferred
