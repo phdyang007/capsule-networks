@@ -53,7 +53,7 @@ def build_model(origin, is_training, lr):
         loss=tf.reduce_mean(tf.squared_difference(origin, reconst))
         opt=tf.train.RMSPropOptimizer(lr).minimize(loss)
     
-        return loss, opt
+        return loss, opt, reconst
     else:
         return incpt_out
 
