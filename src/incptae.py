@@ -46,12 +46,12 @@ def incept_decoder(net, is_training=True, reuse=tf.AUTO_REUSE, scope='id'):
     return net
 
 
-def build_model(origin, is_training, lr):
+def build_model(origin, is_training, gs, lr):
     incpt_out = incept_encoder(origin, is_training)
     reconst = incept_decoder(incpt_out, is_training)
     if is_training:
         loss=tf.reduce_mean(tf.squared_difference(origin, reconst))
-        opt=tf.train.RMSPropOptimizer(lr).minimize(loss)
+        opt=tf.train.RMSPropOptimizer(lr).minimize(loss, global_step=gs)
     
         return loss, opt, reconst
     else:
