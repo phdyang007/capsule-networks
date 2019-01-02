@@ -1,6 +1,8 @@
 import tensorflow as tf
 import tensorflow.contrib.slim as slim
 
+from conf import Config as conf
+
 
 def incept_encoder(net, is_training=True, reuse=tf.AUTO_REUSE, scope='ie'):
     with tf.variable_scope(scope, reuse=reuse):
@@ -41,7 +43,7 @@ def incept_decoder(net, is_training=True, reuse=tf.AUTO_REUSE, scope='id'):
             print(incpt_outd.get_shape())
             net = slim.conv2d_transpose(incpt_outd, 64, [7, 7], stride=2, scope='dconv1')
             print(net.get_shape())
-            net = slim.conv2d_transpose(net, 1, [7, 7], stride=2, scope='dconv2') # change fm count to 3 if using rgb images
+            net = slim.conv2d_transpose(net, conf.data_size[-1], [7, 7], stride=2, scope='dconv2') # change fm count to 3 if using rgb images
             print(net.get_shape())
     return net
 

@@ -5,19 +5,27 @@ import incptae as inc
 from utils import *
 from conf import Config as conf
 
-os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+os.environ["CUDA_VISIBLE_DEVICES"] = "1, 2, 3"
 
 def train():
     # build incptae
-    X = tf.placeholder(tf.float32, shape=(conf.batch_size, conf.data_size, conf.data_size, 1))
+    X = tf.placeholder(tf.float32, shape=(conf.batch_size, conf.data_size[0], conf.data_size[1], conf.data_size[2]))
     global_steps = tf.Variable(0, trainable=False)
     learning_rate = tf.train.exponential_decay(conf.learning_rate, global_steps, 2000, 0.96)
     loss, opt, reconst = inc.build_model(X, True, global_steps, learning_rate)
 
     saver = tf.train.Saver(max_to_keep=20)
     init = tf.global_variables_initializer()
-    
-    data, label = load_mnist()
+
+    if conf.dataset == 'mnist':
+        data, label = load_mnist()
+        assert conf.data_size == [28, 28, 1]
+    elif conf.dataset == 'fashion':
+        data, label = load_fashion()
+        assert conf.data_size == [28, 28, 1]
+    else:
+        data, label = load_cifar()
+        assert conf.data_size == [32, 32, 3]
     
     with tf.Session(config=tf.ConfigProto()) as sess:
         try:
@@ -28,6 +36,7 @@ def train():
 
         for i in range(conf.training):
             this_data, this_label = shuffle(data, label)
+
             for j in range(this_data.shape[0] // conf.batch_size):
                 train_X = this_data[conf.batch_size*j:conf.batch_size*(j+1)]
                 l, _, res, gs = sess.run([loss, opt, reconst, global_steps], feed_dict={X:train_X})
