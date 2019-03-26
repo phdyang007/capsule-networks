@@ -3,3 +3,4 @@ results/*
 *.pyc
 .vscode
 img
+model/*
