@@ -5,7 +5,7 @@ import incptae as inc
 from utils import *
 from conf import Config as conf
 
-os.environ["CUDA_VISIBLE_DEVICES"] = "1, 2, 3"
+os.environ["CUDA_VISIBLE_DEVICES"] = "0, 1"
 
 def train():
     # build incptae

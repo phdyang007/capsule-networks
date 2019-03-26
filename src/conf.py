@@ -2,8 +2,8 @@ class Config(object):
     # dataset = 'mnist', 'fashion' or 'cifar'
     dataset = 'cifar'
     data_size = [32, 32, 3]
-    model_dir = './../model/'
-    img_dir = './../img/'
+    model_dir = './model/'
+    img_dir = './img/'
     batch_size = 128
     learning_rate = 0.001
     training = 1000
